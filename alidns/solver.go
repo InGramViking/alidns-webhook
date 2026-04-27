@@ -5,16 +5,15 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
-	"github.com/jetstack/cert-manager/pkg/acme/webhook"
-	v1alpha1 "github.com/jetstack/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
-	cmmetav1 "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
-	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/util"
+	"github.com/cert-manager/cert-manager/pkg/acme/webhook"
+	v1alpha1 "github.com/cert-manager/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
+	cmmetav1 "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
+	"github.com/cert-manager/cert-manager/pkg/issuer/acme/dns/util"
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 func NewSolver() webhook.Solver {
@@ -76,12 +75,12 @@ func (s *Solver) newClientFromChallenge(ch *v1alpha1.ChallengeRequest) (*Client,
 
 	klog.Infof("Decoded config: %v", cfg)
 
-	cred, err := s.getCredential(&cfg, ch.ResourceNamespace)
+	accessKey, secretKey, err := s.getCredential(&cfg, ch.ResourceNamespace)
 	if err != nil {
 		return nil, fmt.Errorf("get credential error: %v", err)
 	}
 
-	client, err := newClient(cfg.Region, cred)
+	client, err := newClient(cfg.Region, accessKey, secretKey)
 	if err != nil {
 		return nil, fmt.Errorf("new dns client error: %v", err)
 	}
@@ -89,22 +88,22 @@ func (s *Solver) newClientFromChallenge(ch *v1alpha1.ChallengeRequest) (*Client,
 	return client, nil
 }
 
-func (s *Solver) getCredential(cfg *Config, ns string) (*credentials.AccessKeyCredential, error) {
-	accessKey, err := s.getSecretData(cfg.AccessKeySecretRef, ns)
+func (s *Solver) getCredential(cfg *Config, ns string) (accessKey, secretKey string, err error) {
+	ak, err := s.getSecretData(cfg.AccessKeySecretRef, ns)
 	if err != nil {
-		return nil, err
+		return "", "", err
 	}
 
-	secretKey, err := s.getSecretData(cfg.SecretKeySecretRef, ns)
+	sk, err := s.getSecretData(cfg.SecretKeySecretRef, ns)
 	if err != nil {
-		return nil, err
+		return "", "", err
 	}
 
-	return credentials.NewAccessKeyCredential(string(accessKey), string(secretKey)), nil
+	return string(ak), string(sk), nil
 }
 
 func (s *Solver) getSecretData(selector cmmetav1.SecretKeySelector, ns string) ([]byte, error) {
-	secret, err := s.client.CoreV1().Secrets(ns).Get(context.TODO(),selector.Name, metav1.GetOptions{})
+	secret, err := s.client.CoreV1().Secrets(ns).Get(context.TODO(), selector.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to load secret %q", ns+"/"+selector.Name)
 	}
@@ -143,12 +142,12 @@ func (s *Solver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
 		return err
 	}
 
-	if record.Value != ch.Key {
+	if *record.Value != ch.Key {
 		klog.Errorf("Records value does not match: %v", ch.ResolvedFQDN)
 		return errors.New("record value does not match")
 	}
 
-	if err := client.deleteDomainRecord(record.RecordId); err != nil {
+	if err := client.deleteDomainRecord(*record.RecordId); err != nil {
 		klog.Errorf("Delete domain record %v error: %v", ch.ResolvedFQDN, err)
 		return err
 	}

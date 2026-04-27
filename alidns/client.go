@@ -3,19 +3,23 @@ package alidns
 import (
 	"fmt"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/alidns"
-	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/util"
+	alidnsclient "github.com/alibabacloud-go/alidns-20150109/v5/client"
+	openapiutil "github.com/alibabacloud-go/darabonba-openapi/v2/utils"
+	"github.com/cert-manager/cert-manager/pkg/issuer/acme/dns/util"
 )
 
 type Client struct {
-	dnsc *alidns.Client
+	dnsc *alidnsclient.Client
 }
 
-func newClient(region string, cred auth.Credential) (*Client, error) {
-	cfg := sdk.NewConfig()
-	client, err := alidns.NewClientWithOptions(region, cfg, cred)
+func newClient(region, accessKey, secretKey string) (*Client, error) {
+	config := &openapiutil.Config{
+		AccessKeyId:     &accessKey,
+		AccessKeySecret: &secretKey,
+		RegionId:        &region,
+		Type:            strPtr("access_key"),
+	}
+	client, err := alidnsclient.NewClient(config)
 	if err != nil {
 		return nil, err
 	}
@@ -23,56 +27,54 @@ func newClient(region string, cred auth.Credential) (*Client, error) {
 	return &Client{dnsc: client}, nil
 }
 
+func strPtr(s string) *string {
+	return &s
+}
+
 func (c *Client) getHostedZone(zone string) (string, error) {
-	request := alidns.CreateDescribeDomainsRequest()
-	request.KeyWord = util.UnFqdn(zone)
-	request.SearchMode = "EXACT"
+	request := &alidnsclient.DescribeDomainsRequest{}
+	request.SetKeyWord(util.UnFqdn(zone))
+	request.SetSearchMode("EXACT")
 
 	response, err := c.dnsc.DescribeDomains(request)
 	if err != nil {
 		return "", err
 	}
 
-	zones := response.Domains.Domain
-	if len(zones) == 0 {
+	domains := response.Body.Domains.Domain
+	if len(domains) == 0 {
 		return "", fmt.Errorf("zone %s does not exist", zone)
 	}
 
-	return zones[0].DomainName, nil
+	return *domains[0].DomainName, nil
 }
 
 func (c *Client) addTxtRecord(zone, rr, value string) error {
-	record := c.newTxtRecord(zone, rr, value)
-	_, err := c.dnsc.AddDomainRecord(record)
+	request := &alidnsclient.AddDomainRecordRequest{}
+	request.SetDomainName(zone)
+	request.SetRR(rr)
+	request.SetType("TXT")
+	request.SetValue(value)
+
+	_, err := c.dnsc.AddDomainRecord(request)
 	return err
 }
 
-const recordTypeTxt = "TXT"
-
-func (c *Client) newTxtRecord(zone, rr, value string) *alidns.AddDomainRecordRequest {
-	request := alidns.CreateAddDomainRecordRequest()
-	request.Type = recordTypeTxt
-	request.DomainName = zone
-	request.RR = rr
-	request.Value = value
-	return request
-}
-
-func (c *Client) getTxtRecord(zone, rr string) (*alidns.Record, error) {
-	request := alidns.CreateDescribeDomainRecordsRequest()
-	request.Type = recordTypeTxt
-	request.DomainName = zone
-	request.RRKeyWord = rr
+func (c *Client) getTxtRecord(zone, rr string) (*alidnsclient.DescribeDomainRecordsResponseBodyDomainRecordsRecord, error) {
+	request := &alidnsclient.DescribeDomainRecordsRequest{}
+	request.SetDomainName(zone)
+	request.SetType("TXT")
+	request.SetRRKeyWord(rr)
 
 	response, err := c.dnsc.DescribeDomainRecords(request)
 	if err != nil {
 		return nil, err
 	}
 
-	records := response.DomainRecords.Record
+	records := response.Body.DomainRecords.Record
 	for _, r := range records {
-		if r.RR == rr {
-			return &r, nil
+		if *r.RR == rr {
+			return r, nil
 		}
 	}
 
@@ -80,8 +82,8 @@ func (c *Client) getTxtRecord(zone, rr string) (*alidns.Record, error) {
 }
 
 func (c *Client) deleteDomainRecord(id string) error {
-	request := alidns.CreateDeleteDomainRecordRequest()
-	request.RecordId = id
+	request := &alidnsclient.DeleteDomainRecordRequest{}
+	request.SetRecordId(id)
 
 	_, err := c.dnsc.DeleteDomainRecord(request)
 	return err
